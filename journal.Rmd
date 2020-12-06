@@ -51,4 +51,475 @@ samples <- rnorm(100, mean=0, sd=1)
 hist(samples)
 ```
 
-When you knit this R Markdown document, you will see that the histogram is printed to the page, along with the R code. This document can be set up to hide the R code in the webpage, just delete the comment (hashtag) from the cold folding option in the yaml header up top. For purposes of letting yourself see the code, and me see the code, best to keep it the way that it is. You'll learn that all of these things and more can be customized in each R code block.
+#Sales by location Challenge
+```{r}
+# Data Science at TUHH ------------------------------------------------------
+# SALES ANALYSIS ----
+
+# 1.0 Load libraries ----
+library(tidyverse)
+library(readxl)
+
+# 2.0 Importing Files ----
+bikes_tbl      <- read_excel("00_data/01_bike_sales/01_raw_data/bikes.xlsx")
+orderlines_tbl <- read_excel("00_data/01_bike_sales/01_raw_data/orderlines.xlsx")
+bikeshops_tbl  <- read_excel("00_data/01_bike_sales/01_raw_data/bikeshops.xlsx")
+
+# 3.0 Examining Data ----
+orderlines_tbl
+
+# 4.0 Joining Data ----
+bike_orderlines_joined_tbl <- orderlines_tbl %>%
+  left_join(bikes_tbl, by = c("product.id" = "bike.id")) %>%
+  left_join(bikeshops_tbl, by = c("customer.id" = "bikeshop.id"))
+
+
+# 5.0 Wrangling Data ----
+
+bike_orderlines_wrangled_tbl <- bike_orderlines_joined_tbl %>%
+  separate(col    = location,
+           into   = c("city", "state"),
+           sep    = ", ") %>%
+  mutate(total.price = price * quantity) %>%
+  bind_cols(bike_orderlines_joined_tbl %>% select(order.id)) %>% 
+  
+  rename(bikeshop = name) %>%
+  set_names(names(.) %>% str_replace_all("\\.", "_"))
+
+# 6.0 Business Insights ----
+library(lubridate)
+
+# 6.1 Sales by State ----
+sales_by_state_tbl <- bike_orderlines_wrangled_tbl %>%
+  select(state, total_price) %>%
+  
+  group_by(state) %>% 
+  summarize(sales = sum(total_price)) %>%
+  mutate(sales_text = scales::dollar(sales, big.mark = ".", 
+                                     decimal.mark = ",", 
+                                     prefix = "", 
+                                     suffix = " €"))
+
+  
+# Step 2 - Visualize
+
+sales_by_state_tbl %>%
+  ggplot(aes(x = state, y = sales)) +
+  geom_col(fill = "#2DC6D6") + 
+  geom_label(aes(label = sales_text)) + 
+  geom_smooth(method = "lm", se = FALSE) + 
+  scale_y_continuous(labels = scales::dollar_format(big.mark = ".", 
+                                                    decimal.mark = ",", 
+                                                    prefix = "", 
+                                                    suffix = " €")) +
+  labs(
+    title    = "Revenue by state",
+    subtitle = "Upward Trend",
+    x = "",
+    y = "Revenue"
+  )+ theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# 6.2 Sales by Year and State ----
+
+# Step 1 - Manipulate
+sales_by_year_loc_1_tbl <- bike_orderlines_wrangled_tbl %>%
+  select(state,order_date,total_price) %>%
+  mutate(year = year(order_date)) %>%
+  group_by(year, state) %>%
+  summarise(sales = sum(total_price)) %>%
+  ungroup() %>%
+  mutate(sales_text = scales::dollar(sales, big.mark = ".", 
+                                     decimal.mark = ",", 
+                                     prefix = "", 
+                                     suffix = " €"))
+
+
+# Step 2 - Visualize
+sales_by_year_loc_1_tbl %>%
+  ggplot(aes(x = year, y = sales, fill = state)) +
+  geom_col() +
+  facet_wrap(~ state) +
+  scale_y_continuous(labels = scales::dollar_format(big.mark = ".", 
+                                                    decimal.mark = ",", 
+                                                    prefix = "", 
+                                                    suffix = " €")) +
+  labs(
+    title = "Revenue by year and state",
+    subtitle = "Each state has an upward trend",
+    fill = "state" 
+  ) +
+   theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+#API Challenge
+
+```{r}
+library(httr)
+library(jsonlite)
+library(dplyr)
+library(glue)
+
+my_apikey <- "8u2aTw5BYKGyN5gz11t21LQY38EvLSD8"
+url <- modify_url(url = "http://dataservice.accuweather.com", path = glue("/locations/v1/topcities/100?apikey={my_apikey}&language=en-us&details=false"))
+resp <- GET(url)
+
+country_list <- resp %>% .$content %>% rawToChar() %>% fromJSON()
+City <- country_list$EnglishName
+Country <- country_list$Country$EnglishName
+Region <- country_list$Region$EnglishName
+Longitude <- country_list$GeoPosition$Longitude
+Latitude <- country_list$GeoPosition$Latitude
+Timezone <- country_list$TimeZone$Name
+
+country_list_as_df <- data.frame(City, Country, Region,
+                                  Longitude, Latitude, Timezone)
+head(country_list_as_df, 10)
+
+```
+
+
+#webscrapping Challenge
+```{r}
+
+library(tidyverse) # Main Package - Loads dplyr, purrr, etc.
+library(rvest)     # HTML Hacking & Web Scraping
+library(xopen)     # Quickly opening URLs
+library(jsonlite)  # converts JSON files to R objects
+library(glue)      # concatenate strings
+library(stringi)   # character string/text processing
+library(ggplot2)
+url_home <- "https://www.rosebikes.com/bikes/road"
+
+html_home <- read_html(url_home)
+
+bike_name_tbl_challenge <- html_home %>%
+  
+  html_nodes('.catalog-category-bikes__title-text') %>%
+  
+  html_text %>%
+  
+  str_remove_all("\n") %>%
+  
+  enframe(name = "position", value = "name")
+
+bike_price_tbl_challenge <- html_home %>%
+  
+  html_nodes('.catalog-category-bikes__price-title') %>%
+  
+  html_text %>%
+  
+  str_remove_all("\n") %>%
+  
+  enframe(name = "position", value = "price") %>%
+  
+  na_if("") %>%
+  
+  mutate(price = price %>% str_remove_all("ab ")) %>%
+  
+  mutate(price_in_EUR = price %>% str_remove_all("€")) %>%
+  
+  select(-price) %>% mutate(price_in_EUR = readr::parse_number(.$price_in_EUR))
+
+bike_name_price_tbl <- left_join(bike_name_tbl_challenge, bike_price_tbl_challenge) %>%
+  select(-position)
+
+bike_name_price_tbl
+
+ggplot(bike_name_price_tbl, aes(x = name, y = price_in_EUR, color = name)) +
+  geom_col() +
+  expand_limits(x = 0, y = 0) +
+  labs(title = "Bike Model vs Price") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+
+
+#Data wrangling Challenge
+
+```{r}
+
+# Importing library: ---- 
+library(vroom)
+library(tidyverse)
+library(data.table)
+library(tictoc)
+
+# 2.0 Importing Data ----
+
+# Patents: ----
+
+col_types <- list(
+  id = col_character(),
+  date = col_date("%Y-%m-%d"),
+  num_claims = col_double()
+)
+
+patent_tbl <- vroom(
+  file       = "00_data/03_patents/Patent_data_reduced/patent.tsv",
+  delim      = "\t",
+  col_types  = col_types,
+  na         = c("", "NA", "NULL")
+)
+
+#Assignee_id = id,
+# Assignee: ----
+
+col_types_assignee <- list(
+  id = col_character(),
+  type = col_character(),
+  organization = col_character()
+)
+
+assignee_tbl <- vroom(
+  file       = "00_data/03_patents/Patent_data_reduced/assignee.tsv", 
+  delim      = "\t", 
+  col_types  = col_types_assignee,
+  na         = c("", "NA", "NULL")
+)
+
+# Patent assignee: ----
+
+col_types_patent_assignee <- list(
+  patent_id = col_character(),
+  assignee_id = col_character()
+)
+
+patent_assignee_tbl <- vroom(
+  file       = "00_data/03_patents/Patent_data_reduced/patent_assignee.tsv", 
+  delim      = "\t", 
+  col_types  = col_types_patent_assignee,
+  na         = c("", "NA", "NULL")
+)
+
+col_types_uspc <- list(
+  patent_id = col_character(),
+  mainclass_id = col_number(),
+  sequence = col_number()
+)
+
+
+uspc_tbl <- vroom(
+  file       = "00_data/03_patents/Patent_data_reduced/uspc.tsv", 
+  delim      = "\t", 
+  col_types  = col_types_uspc,
+  na         = c("", "NA", "NULL")
+)
+
+
+# 3.0 Converting Data Structure ----
+
+setDT(assignee_tbl)
+setDT(patent_tbl)
+setDT(patent_assignee_tbl)
+setDT(uspc_tbl)
+
+# 4.0 DATA WRANGLING ----
+# Q1.What US company / corporation has the most patents? 
+
+setnames(assignee_tbl, "id", "assignee_id")
+
+combined_data <- merge(x = patent_assignee_tbl, y = assignee_tbl, by = "assignee_id")
+
+
+us_patents <- combined_data %>%
+  filter(type == 2)%>%
+  filter(!is.na(patent_id) || !is.na(organization)) %>%
+  select(-type, -assignee_id)%>% 
+  group_by(organization) %>%
+  count(patent_id) %>%
+  select(-patent_id)%>%
+  summarise(total = sum(n))%>%
+  arrange(desc(total))   
+
+us_top_10 <- us_patents %>% slice(1:10)
+us_top_10
+
+
+# Q2. What US company had the most patents granted in 2019? 
+
+
+tbl_2 <- patent_tbl %>%   
+         separate(col  = date,
+         into = c("year", "month", "day"),
+          sep  = "-", remove = TRUE) %>%
+          mutate(
+              month = as.numeric(month)
+            )%>%
+          filter(month == 01)%>%
+          select(-year, -day)
+
+setnames(tbl_2, "id", "patent_id")
+combined_data_2 <- merge(x = tbl_2, y = combined_data, by = "patent_id")
+
+us_top_10_2014 <- combined_data_2%>%
+                    filter(type == 2)%>%
+                    filter(!is.na(patent_id) || !is.na(organization)) %>%
+                    select(organization, patent_id) %>%
+                    group_by(organization) %>%
+                    count(patent_id) %>%   
+                    summarise(total_patents = sum(n))%>%
+                    arrange(desc(total_patents)) %>% slice(1:10)  
+us_top_10_2014
+
+us_top_10_2014_new <- combined_data_2%>%
+                        filter(type == 2 & num_claims == 1)%>%
+                        filter(!is.na(patent_id) || !is.na(organization)) %>%
+                        select(organization, patent_id) %>%
+                        group_by(organization) %>%
+                        count(patent_id) %>%   
+                        summarise(total_patents = sum(n))%>%
+                        arrange(desc(total_patents)) %>% slice(1:10)
+us_top_10_2014_new
+#Q3. What is the most innovative tech sector? 
+#For the top 10 companies (worldwide) with the most patents,
+#what are the top 5 USPTO tech main classes?
+
+combined_data_3 <- merge(x = uspc_tbl, y = combined_data_2, by = "patent_id")
+
+
+
+top10_worlwide_patents <- combined_data_3  %>%
+                  filter(!is.na(patent_id) || !is.na(organization))%>%
+                  group_by(organization) %>%
+                  arrange(desc(mainclass_id)) %>% # set mainclass order first, the result will be sorted automatically 
+                  count(patent_id) %>%
+                  select(-patent_id)%>%
+                  summarise(total_patents_wordwide = sum(n))%>%
+                  ungroup() %>%
+                  arrange(desc(total_patents_wordwide)) %>% slice(1:10)  
+
+top10_worlwide_patents
+
+```
+
+
+#Data visualization Challenge 1
+
+```{r}
+
+library(scales)
+library(tidyverse)
+library(ggplot2)
+library(lubridate)
+library(readxl)
+library(ggthemes)
+library(dplyr)
+
+covid_data_tbl <- read_csv("https://opendata.ecdc.europa.eu/covid19/casedistribution/csv")
+
+# Preparing Data for plotting
+covid_data_wrangeled_tbl <- covid_data_tbl %>%
+  select(countriesAndTerritories, cases, dateRep, month, year, day) %>%
+  relocate(year, month, day) %>%
+  filter(year == 2020, month >= 1) %>%
+  filter(day != 1) %>%
+  filter(countriesAndTerritories == "France" | countriesAndTerritories == "Germany" | countriesAndTerritories == "United_Kingdom" | countriesAndTerritories == "Spain" | countriesAndTerritories == "United_States_of_America") %>%
+  group_by(countriesAndTerritories,month) %>%
+  summarize(totalcases = sum(cases)) %>%
+  ungroup()
+    
+
+covid_data_wrangeled_tbl %>%
+  ggplot(aes(month ,totalcases, color = countriesAndTerritories)) +
+  geom_smooth(method = "loess", span = 0.2) +
+  scale_y_continuous(labels = scales::dollar_format(scale  = 1/1e6, 
+                                                    prefix = "", 
+                                                    suffix = "M")) +
+  scale_x_continuous(breaks = seq(1, 11 , by=1),labels= c("January",
+                                                          "February",
+                                                          "March",
+                                                          "April",
+                                                          "May",
+                                                          "June",
+                                                          "July",
+                                                          "August",
+                                                          "September",
+                                                          "October",
+                                                          "November")) +
+
+  labs(
+    title = ("COVID-19 confirmed cases worldwide"),
+    subtitle = ("United States has the highest rate of cases"),
+    caption = "",
+    x = "(Year 2020)",
+    y = "Cumulative Cases",
+    color = "Country"
+      ) +
+  geom_label(aes(label = (totalcases)), 
+             hjust = "inward",
+             size  = 3,
+             color = RColorBrewer::brewer.pal(n = 12, name = "Blues")[8]) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+#Data visualization Challenge 2
+```{r}
+library(tidyverse)
+library(scales)
+library(ggplot2)
+library(lubridate)
+library(ggthemes)
+library(dbplyr)
+library(maps)
+
+# Importing data
+
+
+covid_data_tbl <- read_csv("https://opendata.ecdc.europa.eu/covid19/casedistribution/csv")
+
+world <- map_data("world") %>%
+  mutate(across(region, str_replace_all, "_", " ")) %>%
+  mutate(region = case_when(
+    
+    region == "UK" ~ "United_Kingdom",
+    region == "USA" ~ "United_States_of_America",
+    region == "Czech_Republic" ~ "Czechia",
+    TRUE ~ region
+    
+  ))
+
+covid_data_tbl %>% 
+  mutate(across(countriesAndTerritories, str_replace_all, "_", " ")) %>%
+  mutate(countriesAndTerritories = case_when(
+    
+    countriesAndTerritories == "United Kingdom" ~ "United_Kingdom",
+    countriesAndTerritories == "United_States_of_America" ~ "United States of America",
+    countriesAndTerritories == "Czechia"~"Czechia",
+    TRUE ~ countriesAndTerritories
+    
+  ))
+
+#manipulation of world data table
+world_map <- world %>%
+  select(region, long, lat, group) %>%
+  rename(countriesAndTerritories = region)
+
+
+#manipulation of covid data table
+covid_modified_data_tbl <- covid_data_tbl %>%
+  select(day, month, year, countriesAndTerritories, deaths, popData2019) %>%
+  group_by(year, countriesAndTerritories, popData2019) %>%
+  summarise(total_death = sum(deaths)) %>%
+  ungroup() %>%
+  mutate(mortality_rate = (total_death / popData2019) * 100)
+
+#merging data between 2 tables 
+All_data_tbl <- left_join(covid_modified_data_tbl,
+                          world_map,
+                          by = "countriesAndTerritories") %>%
+                filter(year == 2020)
+
+#first layer of the map
+world_map <- map_data("world")
+ggplot(world_map, aes(x = long, y = lat, group = group)) +
+  geom_polygon(fill="lightblue", colour = "black",size = 0.1)
+
+#second layer of the map
+ggplot(data = All_data_tbl, aes(x = long, y = lat, group = group)) +
+  geom_polygon(aes(fill = mortality_rate), color = "blue",size = 0.1) +
+  scale_fill_viridis_c(option = "E", alpha = 0.75 )
+```
+
+
